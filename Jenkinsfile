@@ -1,36 +1,40 @@
 pipeline {
     agent any
 
-    environment {
-        # Fetch Docker credentials dynamically from AWS Secrets Manager
-        DOCKER_SECRET = sh(script: "aws secretsmanager get-secret-value --secret-id docker-secret --query SecretString --output text", returnStdout: true).trim()
-        DOCKER_USERNAME = sh(script: "echo $DOCKER_SECRET | jq -r .username", returnStdout: true).trim()
-        DOCKER_PASSWORD = sh(script: "echo $DOCKER_SECRET | jq -r .password", returnStdout: true).trim()
-    }
-
     stages {
-        stage('Build & Tag Docker Image') {
+        stage('Build & Push Docker Image') {
             steps {
                 script {
-                    dir('src') {
-                        // Login to Docker Hub using AWS Secrets Manager credentials
-                        sh "echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin"
-                        // Build Docker image
-                        sh "docker build -t $DOCKER_USERNAME/frontend:latest ."
+                    def secretJson = sh(
+                        script: "aws secretsmanager get-secret-value --secret-id docker-secret --region ap-south-1 --query SecretString --output text",
+                        returnStdout: true
+                    ).trim()
+
+                    def dockerUser = sh(script: "echo '${secretJson}' | jq -r .username", returnStdout: true).trim()
+                    def dockerPass = sh(script: "echo '${secretJson}' | jq -r .password", returnStdout: true).trim()
+
+                    if (dockerUser == 'null' || dockerPass == 'null' || dockerUser == '' || dockerPass == '') {
+                        error "Failed to parse Docker credentials from AWS secret"
+                    }
+
+                    echo "Debug: Using Docker username = ${dockerUser}"
+
+                    withEnv(["DOCKER_USER=${dockerUser}", "DOCKER_PASS=${dockerPass}"]) {
+                        // Build from repository root (recommended for frontend)
+                        sh '''
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin || exit 1
+                            docker build -t "$DOCKER_USER/frontend:latest" .
+                            docker push "$DOCKER_USER/frontend:latest"
+                        '''
                     }
                 }
             }
         }
-        
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    dir('src') {
-                        // Push Docker image to Docker Hub
-                        sh "docker push $DOCKER_USERNAME/frontend:latest"
-                    }
-                }
-            }
+    }
+
+    post {
+        always {
+            sh 'docker logout || true'
         }
     }
 }
