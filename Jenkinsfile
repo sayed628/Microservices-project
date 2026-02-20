@@ -8,8 +8,8 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    echo "Username from credential: ${DOCKER_USER}"
-                    // Don't echo password!
+                    // Use sh echo instead of Groovy echo to reduce masking confusion
+                    sh 'echo "Username loaded: $DOCKER_USER"'
                 }
             }
         }
