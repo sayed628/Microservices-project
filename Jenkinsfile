@@ -1,36 +1,34 @@
 pipeline {
     agent any
 
-    environment {
-        # Fetch Docker credentials from AWS Secrets Manager
-        DOCKER_SECRET = sh(script: "aws secretsmanager get-secret-value --secret-id docker-secret --query SecretString --output text", returnStdout: true).trim()
-        DOCKER_USERNAME = sh(script: "echo $DOCKER_SECRET | jq -r .username", returnStdout: true).trim()
-        DOCKER_PASSWORD = sh(script: "echo $DOCKER_SECRET | jq -r .password", returnStdout: true).trim()
-    }
-
     stages {
-        stage('Build & Tag Docker Image') {
+        stage('Build & Push Docker Image') {
             steps {
-                script {
+                withCredentials([usernamePassword(
+                    credentialsId: 'docker-secret',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
                     dir('src') {
-                        // Login to Docker Hub using AWS Secrets Manager credentials
-                        sh "echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin"
-                        // Build image
-                        sh "docker build -t $DOCKER_USERNAME/checkoutservice:latest ."
+                        sh '''
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin || {
+                                echo "Docker login failed"
+                                exit 1
+                            }
+
+                            docker build -t "$DOCKER_USER/checkoutservice:latest" .
+
+                            docker push "$DOCKER_USER/checkoutservice:latest"
+                        '''
                     }
                 }
             }
         }
-        
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    dir('src') {
-                        // Push image to Docker Hub
-                        sh "docker push $DOCKER_USERNAME/checkoutservice:latest"
-                    }
-                }
-            }
+    }
+
+    post {
+        always {
+            sh 'docker logout || true'
         }
     }
 }
