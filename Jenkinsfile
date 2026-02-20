@@ -20,11 +20,11 @@ pipeline {
                     echo "Debug: Using Docker username = ${dockerUser}"
 
                     withEnv(["DOCKER_USER=${dockerUser}", "DOCKER_PASS=${dockerPass}"]) {
-                        // No dir('src') → build from repo root
+                        // Build from repository root (recommended for frontend)
                         sh '''
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin || exit 1
-                            docker build -t "$DOCKER_USER/emailservice:latest" .
-                            docker push "$DOCKER_USER/emailservice:latest"
+                            docker build -t "$DOCKER_USER/frontend:latest" .
+                            docker push "$DOCKER_USER/frontend:latest"
                         '''
                     }
                 }
