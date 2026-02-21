@@ -1,22 +1,69 @@
 pipeline {
     agent any
 
+    environment {
+        CLUSTER_NAME = 'ecom-eks'         // ← your new cluster name
+        REGION       = 'ap-south-1'
+        NAMESPACE    = 'webapps'
+    }
+
     stages {
-        stage('Deploy To Kubernetes') {
+        stage('Authenticate to EKS') {
             steps {
-                withKubeCredentials(kubectlCredentials: [[caCertificate: '', clusterName: 'EKS-1', contextName: '', credentialsId: 'k8-token', namespace: 'webapps', serverUrl: 'https://9F39F577334FF23706994135261985F2.gr7.ap-south-1.eks.amazonaws.com']]) {
-                    sh "kubectl apply -f deployment-service.yml"
-                    
+                script {
+                    // Use EC2 IAM role to generate fresh kubeconfig (no hardcoded creds)
+                    sh """
+                        aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${REGION} --kubeconfig kubeconfig
+                        export KUBECONFIG=\$(pwd)/kubeconfig
+                        kubectl config use-context arn:aws:eks:${REGION}:365202716362:cluster/${CLUSTER_NAME}
+                    """
                 }
             }
         }
-        
-        stage('verify Deployment') {
+
+        stage('Deploy to Kubernetes') {
             steps {
-                withKubeCredentials(kubectlCredentials: [[caCertificate: '', clusterName: 'EKS-1', contextName: '', credentialsId: 'k8-token', namespace: 'webapps', serverUrl: 'https://9F39F577334FF23706994135261985F2.gr7.ap-south-1.eks.amazonaws.com']]) {
-                    sh "kubectl get svc -n webapps"
+                script {
+                    sh """
+                        kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        kubectl apply -f deployment-service.yml -n ${NAMESPACE}
+                    """
                 }
             }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    sh """
+                        echo "Waiting for pods to be ready..."
+                        kubectl wait --for=condition=Ready pod -l app=frontend -n ${NAMESPACE} --timeout=300s || echo "Timeout - check logs"
+                        
+                        echo "Pods:"
+                        kubectl get pods -n ${NAMESPACE} -o wide
+                        
+                        echo "Services:"
+                        kubectl get svc -n ${NAMESPACE}
+                        
+                        echo "Ingress (if any):"
+                        kubectl get ingress -n ${NAMESPACE} || true
+                    """
+                }
+            }
+        }
+
+        // Optional: Cleanup stage (uncomment when you want to tear down)
+        // stage('Cleanup') {
+        //     steps {
+        //         sh "kubectl delete -f deployment-service.yml -n ${NAMESPACE} --ignore-not-found=true"
+        //     }
+        // }
+    }
+
+    post {
+        always {
+            // Clean up temporary kubeconfig
+            sh 'rm -f kubeconfig || true'
         }
     }
 }
